@@ -1,41 +1,80 @@
 import os
+import numpy as np
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from openai import OpenAI
+from PIL import Image
+import io
+import base64
+from tensorflow.keras.models import load_model
+from tensorflow.keras.preprocessing.image import img_to_array
+
 app = Flask(__name__)
 CORS(app)
-# !!! هام: سنقوم بوضع المفتاح الخاص بك هنا لاحقًا
-client = OpenAI(api_key="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")
-DUAL_PROMPT_TEXT = "أنت محلل فني خبير، مهمتك هي تحديد فرص التداول عالية الاحتمالية من خلال مقارنة إطارين زمنيين. سأعطيك صورتين لنفس الأصل: M5 و M15. 1. تحليل الاتجاه العام (صورة M15): انظر إلى شارت الـ 15 دقيقة لتحديد الاتجاه الرئيسي للسوق. هل هو صاعد، هابط، أم عرضي؟ حدد أي مستويات دعم أو مقاومة قوية وواضحة. 2. تحليل نقطة الدخول والزخم (صورة M5): انظر الآن إلى شارت الـ 5 دقائق. هل حركة السعر الحالية في M5 تتوافق مع الاتجاه العام الذي حددته من M15؟ ابحث عن أي نماذج شموع تأكيدية على شارت M5 تدعم هذا الاتجاه. 3. القرار النهائي: بناءً على مدى توافق التحليل بين الإطارين، ما هو التوقع الأكثر ترجيحًا للحركة القادمة؟ 4. أجب بكلمة واحدة فقط: 'صعود' أو 'هبوط'."
+
+# تحميل النموذج عند بدء تشغيل الخادم
+# The model file 'trading_model.h5' must be in the same directory
+try:
+    model = load_model('trading_model.h5')
+    print("Model loaded successfully!")
+except Exception as e:
+    model = None
+    print(f"Error loading model: {e}")
+
+def prepare_image(image_data):
+    """Decodes image from base64, resizes and prepares it for the model."""
+    # Decode the base64 string
+    image_data = base64.b64decode(image_data.split(',')[1])
+    # Open the image
+    image = Image.open(io.BytesIO(image_data)).convert('RGB')
+    # Resize to the target size the model expects (e.g., 224x224)
+    image = image.resize((224, 224))
+    # Convert image to array
+    image = img_to_array(image)
+    # Expand dimensions to match the model's input shape
+    image = np.expand_dims(image, axis=0)
+    # Normalize the image data
+    image = image / 255.0
+    return image
+
 @app.route('/analyze-dual', methods=['POST'])
 def analyze_dual_image():
+    if not model:
+        return jsonify({"error": "Model is not loaded. Check server logs."}), 500
+
     data = request.get_json()
-    if not data or 'image_m5' not in data or 'image_m15' not in data:
-        return jsonify({"error": "الرجاء إرسال الصورتين (M5 و M15)"}), 400
-    image_m5_url = data['image_m5']
-    image_m15_url = data['image_m15']
+    if not data or 'image_m5' not in data:
+        return jsonify({"error": "الرجاء إرسال صورة التحليل"}), 400
+
     try:
-        response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "user", "content": [
-                    {"type": "text", "text": DUAL_PROMPT_TEXT},
-                    {"type": "image_url", "image_url": {"url": image_m15_url, "detail": "low"}},
-                    {"type": "image_url", "image_url": {"url": image_m5_url, "detail": "high"}},
-                ]}
-            ], max_tokens=10)
-        analysis_result = response.choices[0].message.content.strip().lower()
-        if "صعود" in analysis_result: final_result = "صعود"
-        elif "هبوط" in analysis_result: final_result = "هبوط"
-        else: final_result = "غير محدد"
+        # We only need one image for our custom model
+        image_data = data['image_m5']
+        
+        # Prepare the image for the model
+        prepared_image = prepare_image(image_data)
+        
+        # Make prediction
+        prediction = model.predict(prepared_image)
+        
+        # The output of the model is a probability. 
+        # If it's > 0.5, it's 'Up' (class 1), otherwise it's 'Down' (class 0)
+        if prediction[0][0] > 0.5:
+            final_result = "صعود"
+        else:
+            final_result = "هبوط"
+            
         return jsonify({"prediction": final_result})
+
     except Exception as e:
-        print(f"OpenAI Error: {e}")
+        print(f"Prediction Error: {e}")
         return jsonify({"error": "فشل تحليل الصورة"}), 500
+
 @app.route('/')
 def index():
-    return "خادم التحليل الاحترافي يعمل!"
+    return "خادم التحليل بالنموذج المخصص يعمل الآن!"
+
 # The following is needed for Render to run the app
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    # Render dynamically assigns a port, so we use the PORT environment variable
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
     
