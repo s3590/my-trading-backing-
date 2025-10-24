@@ -4,11 +4,12 @@ FROM python:3.11-slim
 # اضبط مجلد العمل داخل الحاوية
 WORKDIR /app
 
-# قم بتثبيت تبعيات النظام التي تحتاجها Pillow
-# RUN تعني "نفّذ هذا الأمر أثناء بناء الصورة"
-RUN apt-get update && apt-get install -y libjpeg-dev zlib1g-dev \
+# قم بتثبيت تبعيات النظام التي تحتاجها Pillow و Tesseract OCR
+# libtesseract-dev و tesseract-ocr هما الأساسيان للتعرف الضوئي على الحروف
+RUN apt-get update && \
+    apt-get install -y libjpeg-dev zlib1g-dev libglib2.0-0 libsm6 libxext6 libxrender-dev tesseract-ocr libtesseract-dev && \
     # تنظيف مخلفات apt-get لتقليل حجم الصورة
-    && rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/*
 
 # انسخ ملف المتطلبات أولاً (للاستفادة من التخزين المؤقت لـ Docker)
 COPY requirements.txt .
